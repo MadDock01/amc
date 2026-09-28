@@ -1,0 +1,9 @@
+-- Local development seed (runs on `supabase db reset`).
+-- Intentionally empty: sign up through the app to create a shop.
+--
+-- To make yourself platform super admin, create the user with the service
+-- role (see README "Create your super admin account"), or promote an
+-- existing user in the SQL editor:
+--
+--   update public.users set role = 'super_admin', tenant_id = null
+--   where email = 'you@example.com';

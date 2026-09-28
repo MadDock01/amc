@@ -70,6 +70,38 @@ test("staff invited via app_metadata joins the owner's tenant", async () => {
   assert.equal(await tenantOf(staffA), tenantA);
 });
 
+test("GoTrue-style insert-then-update of app_metadata moves the user and drops the orphan tenant", async () => {
+  // GoTrue admin createUser: INSERT with provider-only app_metadata, then UPDATE.
+  const uid = await signUp("late-staff@shop.test", { name: "Late" }, { provider: "email" });
+  const orphan = await tenantOf(uid);
+  assert.notEqual(orphan, tenantA);
+  await db.query(
+    "update auth.users set raw_app_meta_data = raw_app_meta_data || $2 where id = $1",
+    [uid, { tenant_id: tenantA, role: "staff" }],
+  );
+  assert.equal(await tenantOf(uid), tenantA);
+  const u = (await db.query("select role from public.users where id = $1", [uid])).rows[0];
+  assert.equal(u.role, "staff");
+  const gone = (await db.query("select count(*)::int as n from public.tenants where id = $1", [orphan])).rows[0].n;
+  assert.equal(gone, 0);
+
+  const root = await signUp("late-root@platform.test", {}, { provider: "email" });
+  const rootOrphan = await tenantOf(root);
+  await db.query("update auth.users set raw_app_meta_data = raw_app_meta_data || $2 where id = $1", [root, { role: "super_admin" }]);
+  const r = (await db.query("select role, tenant_id from public.users where id = $1", [root])).rows[0];
+  assert.equal(r.role, "super_admin");
+  assert.equal(r.tenant_id, null);
+  assert.equal((await db.query("select count(*)::int as n from public.tenants where id = $1", [rootOrphan])).rows[0].n, 0);
+});
+
+test("user metadata updates cannot grant membership", async () => {
+  const uid = await signUp("sneaky@x.test", { business_name: "Sneaky" });
+  const own = await tenantOf(uid);
+  // raw_user_meta_data is user-writable via auth.updateUser(); it must be ignored
+  await db.query("update auth.users set raw_user_meta_data = $2 where id = $1", [uid, { tenant_id: tenantA, role: "staff" }]);
+  assert.equal(await tenantOf(uid), own);
+});
+
 test("products get computed expiry dates and tenant_id default", async () => {
   await asUser(ownerA, async (tx) => {
     customerA = (
@@ -237,4 +269,14 @@ test("activating a subscription upgrades the tenant and tops up SMS", async () =
   assert.ok(t.subscription_ends_at > new Date(Date.now() + 27 * 864e5));
   const after = (await db.query("select balance from public.sms_credits where tenant_id = $1", [tenantB])).rows[0].balance;
   assert.equal(after - before, 500);
+});
+
+test("admin stats are super-admin only", async () => {
+  await assert.rejects(asUser(ownerA, (tx) => tx.query("select * from public.admin_monthly_stats(6)")), /forbidden/);
+  await asUser(admin, async (tx) => {
+    const rows = (await tx.query("select * from public.admin_monthly_stats(6)")).rows;
+    assert.equal(rows.length, 6);
+    const usage = (await tx.query("select * from public.admin_tenant_usage(now() - interval '30 days')")).rows;
+    assert.ok(usage.length >= 2);
+  });
 });
