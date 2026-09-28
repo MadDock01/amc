@@ -62,3 +62,30 @@ export async function signup(_: AuthState, formData: FormData): Promise<AuthStat
   }
   redirect("/dashboard?ok=" + encodeURIComponent("Welcome! Your 14-day free trial has started."));
 }
+
+export async function requestPasswordReset(_: AuthState, formData: FormData): Promise<AuthState> {
+  const email = z.string().trim().email().safeParse(formData.get("email"));
+  if (!email.success) return { error: "Enter a valid email" };
+  const origin = process.env.NEXT_PUBLIC_APP_URL ?? headers().get("origin") ?? "";
+  const { error } = await createClient().auth.resetPasswordForEmail(email.data, {
+    redirectTo: `${origin}/auth/callback?next=/reset-password`,
+  });
+  if (error) console.error("resetPasswordForEmail", error.message);
+  // Same answer either way so this can't be used to discover accounts.
+  return { message: "If an account exists for that email, a reset link is on its way." };
+}
+
+export async function updatePassword(_: AuthState, formData: FormData): Promise<AuthState> {
+  const parsed = z
+    .object({ password: z.string().min(8, "Password must be at least 8 characters"), confirm: z.string() })
+    .refine((d) => d.password === d.confirm, { message: "Passwords don't match" })
+    .safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Your reset link has expired. Request a new one." };
+  const { error } = await supabase.auth.updateUser({ password: parsed.data.password });
+  if (error) return { error: error.message };
+  const { data: profile } = await supabase.from("users").select("role").eq("id", user.id).single();
+  redirect(homeFor(profile?.role ?? "owner") + "?ok=" + encodeURIComponent("Password updated."));
+}

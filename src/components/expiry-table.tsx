@@ -2,9 +2,11 @@ import Link from "next/link";
 import { daysBetween, expiryTone, formatDate, todayISO } from "@/lib/dates";
 import { displayPhone } from "@/lib/phone";
 import type { ExpiryRow } from "@/lib/queries";
+import type { Followup } from "@/lib/types";
+import { OutcomeBadge } from "./outcome";
 import { Badge, Empty, toneToBadge } from "./ui";
 
-export function ExpiryTable({ rows, empty }: { rows: ExpiryRow[]; empty: string }) {
+export function ExpiryTable({ rows, empty, outcomes }: { rows: ExpiryRow[]; empty: string; outcomes?: Map<string, Followup> }) {
   if (!rows.length) return <Empty>{empty}</Empty>;
   const today = todayISO();
   return (
@@ -17,6 +19,7 @@ export function ExpiryTable({ rows, empty }: { rows: ExpiryRow[]; empty: string 
             <th>Type</th>
             <th>Expiry</th>
             <th>Days</th>
+            {outcomes && <th>Last follow-up</th>}
           </tr>
         </thead>
         <tbody>
@@ -41,6 +44,9 @@ export function ExpiryTable({ rows, empty }: { rows: ExpiryRow[]; empty: string 
                     {left < 0 ? `${-left}d overdue` : left === 0 ? "today" : `${left}d`}
                   </Badge>
                 </td>
+                {outcomes && (
+                  <td>{outcomes.get(r.product.id) ? <OutcomeBadge outcome={outcomes.get(r.product.id)!.outcome} /> : <span className="text-slate-400">—</span>}</td>
+                )}
               </tr>
             );
           })}

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { displayPhone } from "@/lib/phone";
 
 interface Option {
   id: string;
@@ -60,7 +61,7 @@ export function CustomerPicker({ initial }: { initial?: Option | null }) {
         <input type="hidden" name="customer_id" value={selected.id} />
         <span>
           <span className="font-medium">{selected.name}</span>
-          {selected.phone && <span className="ml-2 text-slate-500">{selected.phone}</span>}
+          {selected.phone && <span className="ml-2 text-slate-500">{displayPhone(selected.phone)}</span>}
         </span>
         <button type="button" className="text-xs text-indigo-700 hover:underline" onClick={() => setSelected(null)}>
           Change
@@ -92,7 +93,7 @@ export function CustomerPicker({ initial }: { initial?: Option | null }) {
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => setSelected(o)}
               >
-                {o.name} <span className="text-slate-500">{o.phone}</span>
+                {o.name} <span className="text-slate-500">{o.phone ? displayPhone(o.phone) : ""}</span>
               </button>
             </li>
           ))}

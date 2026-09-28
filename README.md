@@ -11,34 +11,27 @@ Resend (email) · bKash Tokenized Checkout.
 
 ## What's included
 
-| Blueprint phase | Where |
-|---|---|
-| 1. Multi-tenant schema + RLS | `supabase/migrations/*.sql` |
-| 2. Signup → tenant + 14-day trial, role-based redirects | `src/app/(auth)`, `handle_new_auth_user()` trigger |
-| 3. Product/customer entry, auto expiry dates, colour-coded list, CSV import | `src/app/dashboard/products`, `…/customers` |
-| 4. Reminder engine (daily generate → send queue → retry) | `generate_due_reminders()` SQL + `src/lib/reminders/*` + `/api/cron/reminders` |
-| 5. Super admin panel | `src/app/super-admin` |
-| 6. bKash billing + "renew your plan" reminders to shop owners | `src/app/dashboard/billing`, `/api/bkash/callback`, `sendPlatformRenewalNotices()` |
-| Customer status page (link in the SMS, no login) | `src/app/w/[token]` |
-
-**Shop dashboard** (`/dashboard`): expiring this week and this month, overdue/missed renewals, products (search,
-filter, sort, red = ≤7 days, yellow = ≤30 days), customers, reminder history and delivery log, monthly
-report (print to PDF, CSV export), staff management, billing, and settings (reminder days, SMS language, owner copies).
-
-**Super admin** (`/super-admin`): MRR, trials, lapsed shops, revenue vs SMS cost chart, SMS margin per shop,
-tenant list and detail (support view), plan/status override, trial extension, SMS credit top-up, manual tenant
-onboarding, and system health (last cron runs, queue, failed sends, resend failed reminders, run the job now).
+| Area | Features | Where |
+|---|---|---|
+| Multi-tenant core | Schema, RLS on every table, composite tenant FKs, DB-enforced plan limits | `supabase/migrations/*.sql` |
+| Auth | Signup → shop + 14-day trial, login, forgot/reset password, profile & change password, role redirects | `src/app/(auth)`, `src/app/account` |
+| Products & customers | Entry form with customer autocomplete, auto expiry dates, colour-coded list, search/filter/sort, archive, CSV import & export | `src/app/dashboard/products`, `…/customers` |
+| Reminder engine | Daily window-based generation, SMS + email + **WhatsApp**, leased queue, retries, credit refunds, **daily SMS cap**, **custom SMS templates** (EN/BN), **“send now”** | `src/lib/reminders/*`, `/api/cron/reminders` |
+| Renewal CRM | **Follow-up log** per product (contacted / interested / renewed / lost + next date), follow-ups due list, overdue list hides renewed/lost, **customer “request a renewal call”** from the SMS link → requests inbox | product page, `/dashboard/requests`, `/w/[token]` |
+| Reports | Monthly expiries, reminders & SMS used, **renewal rate**, per-branch breakdown, CSV export, print to PDF | `/dashboard/reports` |
+| Team | Staff (no delete / billing), **branches** with branch-scoped staff (Enterprise), **activity log** of every change (staff, API, platform admin) | `/dashboard/staff`, `/dashboard/branches`, `/dashboard/activity` |
+| Billing | bKash plans **monthly or yearly (2 months free)**, **SMS top-up packs**, printable **invoices**, renewal reminders to shop owners | `/dashboard/billing` |
+| API (Enterprise) | Hashed **API keys**, REST: products, customers, reminders | `/dashboard/api`, `/api/v1/*` |
+| Super admin | MRR, revenue vs SMS cost chart, per-shop margin, tenants, plan/trial/credit/SMS-cap overrides, **manual (cash/bank) payments**, **payments list incl. failed**, onboarding, system health + resend, audit trail | `/super-admin` |
 
 ### Roles
 
-| | Owner | Staff | Super admin |
-|---|---|---|---|
-| Add/edit products & customers | ✅ | ✅ | read (support) |
-| Delete products & customers | ✅ | ❌ (blocked by RLS) | – |
-| Billing, staff, settings | ✅ | ❌ | override |
-| All tenants | ❌ | ❌ | ✅ |
-
----
+| | Owner | Staff | Branch staff | Super admin |
+|---|---|---|---|---|
+| Add/edit products & customers, follow-ups, send now | ✅ | ✅ | ✅ (own branch only) | read (support) |
+| Delete products & customers | ✅ | ❌ | ❌ | – |
+| Billing, staff, branches, settings, API keys, activity log | ✅ | ❌ | ❌ | override + audit |
+| All tenants | ❌ | ❌ | ❌ | ✅ |
 
 ## How tenant isolation works
 
@@ -101,8 +94,13 @@ npm test          # runs every migration on PGlite (real Postgres, WASM) + unit 
 npm run typecheck && npm run lint && npm run build
 ```
 
-The DB tests cover tenant isolation (read, write and cross-tenant foreign keys), privilege escalation, staff
-permissions, plan limits, reminder windows and idempotency, queue leasing, credits, and subscription activation.
+The DB tests cover tenant isolation (read, write and cross-tenant foreign keys), privilege escalation, staff and
+branch scoping, plan limits, reminder windows and idempotency, manual reminders, WhatsApp generation, queue leasing,
+credits and the daily cap, audit log, SMS packs, and monthly/yearly subscription activation.
+
+`npm run test:e2e` drives the whole app in Chromium against a running app and Supabase (see the header of
+`tests/e2e/app.e2e.mjs`). It covers signup, products, CSV import, cron, the public page and renewal requests, staff,
+branches, templates, send now, billing and invoices, the super admin panel, and the REST API.
 
 ---
 
@@ -163,15 +161,41 @@ extends the plan by one month (stacked on top of any remaining paid time) and ad
 
 Defined in `src/lib/plans.ts` and mirrored in SQL (`plan_product_limit`, `plan_sms_bundle`). Update both together.
 
-| Plan | Price | Products | SMS / month | Staff |
-|---|---|---|---|---|
-| Trial | free, 14 days | 25 | 10 | 1 |
-| Basic | ৳500 | 100 | 100 | 1 |
-| Pro | ৳1200 | 500 | 500 | 10 |
-| Enterprise | custom (set by super admin) | unlimited | 2000 | unlimited |
+| Plan | Monthly | Yearly | Products | SMS / month | Staff | Extras |
+|---|---|---|---|---|---|---|
+| Trial | free, 14 days | – | 25 | 10 | 1 | WhatsApp, templates |
+| Basic | ৳500 | ৳5,000 | 100 | 100 | 1 | templates |
+| Pro | ৳1,200 | ৳12,000 | 500 | 500 | 10 | + WhatsApp |
+| Enterprise | custom | custom | unlimited | 2000 | unlimited | + branches, API |
 
-## Known gaps / next steps
-- WhatsApp channel (enum exists; no sender yet).
-- Buying extra SMS packs with bKash (the super admin can add credits by hand for now).
-- Enterprise multi-branch and API access.
-- A per-day SMS send cap per tenant, if you want protection against runaway imports.
+SMS packs (any plan): 500 = ৳250, 1,000 = ৳450, 5,000 = ৳2,000. Enterprise is activated by the super admin
+(manual payment or plan override).
+
+## REST API (Enterprise)
+
+Owners create keys under **Dashboard → API**. Only a SHA-256 hash is stored, and each key is shown once.
+Send it as `Authorization: Bearer amc_…`.
+
+| Endpoint | |
+|---|---|
+| `GET /api/v1/products?expiring_within=30&page=1&per_page=100` | list products |
+| `POST /api/v1/products` | create; `customer_id` or `customer: {name, phone, email}` (matched by phone) |
+| `GET /api/v1/products/:id` | product + customer + reminder history |
+| `GET /api/v1/customers?phone=01…` / `POST /api/v1/customers` | look up / create (idempotent on phone) |
+| `GET /api/v1/reminders?status=sent&since=…` | delivery status |
+
+Writes through the API appear in the shop's activity log as `API: <key name>`.
+
+## WhatsApp
+Create a WhatsApp Cloud API app, approve a template (default name `warranty_reminder`) with 6 body variables:
+`{{1}}` customer, `{{2}}` product, `{{3}}` warranty/AMC, `{{4}}` expiry date, `{{5}}` shop, `{{6}}` shop phone.
+Set `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_TEMPLATE` and `WHATSAPP_TEMPLATE_LANG`. Shops on Pro or
+Enterprise turn it on in Settings. Each WhatsApp message uses 1 SMS credit. Without a token, messages are logged to the
+console.
+
+## Not included
+- A Bangla-language dashboard. The UI is English; SMS can be sent in Bangla.
+- Automatic recurring charges. bKash tokenized checkout is pay-per-period, and shops get a renewal reminder 3 days
+  before their plan ends.
+- API rate limiting beyond hashed keys and plan checks. Put the app behind Cloudflare or similar if you expose the API
+  publicly.

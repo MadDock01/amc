@@ -7,5 +7,5 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   // Skip static assets, the public warranty page and cron/webhook APIs.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|w/|api/cron|api/bkash|.*\\.(?:svg|png|jpg|ico)$).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|w/|api/cron|api/bkash|api/v1|.*\\.(?:svg|png|jpg|ico)$).*)"],
 };

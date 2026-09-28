@@ -22,7 +22,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: { 
   return (
     <>
       <Flash searchParams={searchParams} />
-      <PageHeader title="Customers" subtitle={`${count ?? 0} customer(s)`} />
+      <PageHeader title="Customers" subtitle={`${count ?? 0} customer(s)`} actions={<a className="btn-secondary" href="/api/export/customers">Export CSV</a>} />
       <details className="card mb-4">
         <summary className="cursor-pointer text-sm font-medium">+ Add customer</summary>
         <form action={createCustomer} className="mt-3 grid gap-3 sm:grid-cols-5">

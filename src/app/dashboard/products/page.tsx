@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requireTenantUser } from "@/lib/auth";
+import { assignableBranches } from "@/lib/branches";
 import { createClient } from "@/lib/supabase/server";
 import { addDaysISO, daysBetween, expiryTone, formatDate, nextExpiry, todayISO } from "@/lib/dates";
 import { displayPhone } from "@/lib/phone";
@@ -15,9 +16,10 @@ type Filter = "all" | "7" | "30" | "expired" | "inactive";
 export default async function ProductsPage({
   searchParams,
 }: {
-  searchParams: { q?: string; filter?: Filter; sort?: "expiry" | "recent" | "name"; page?: string; ok?: string; error?: string };
+  searchParams: { q?: string; filter?: Filter; sort?: "expiry" | "recent" | "name"; page?: string; branch?: string; ok?: string; error?: string };
 }) {
-  await requireTenantUser();
+  const { tenant, user } = await requireTenantUser();
+  const branches = await assignableBranches(tenant, user);
   const supabase = createClient();
   const today = todayISO();
   const filter: Filter = searchParams.filter ?? "all";
@@ -27,6 +29,7 @@ export default async function ProductsPage({
 
   let query = supabase.from("products").select(PRODUCT_SELECT, { count: "exact" });
   query = filter === "inactive" ? query.eq("is_active", false) : query.eq("is_active", true);
+  if (searchParams.branch && branches.some((b) => b.id === searchParams.branch)) query = query.eq("branch_id", searchParams.branch);
 
   const range = (from: string, to: string) =>
     `and(warranty_expiry_date.gte.${from},warranty_expiry_date.lte.${to}),and(amc_expiry_date.gte.${from},amc_expiry_date.lte.${to})`;
@@ -69,7 +72,7 @@ export default async function ProductsPage({
 
   const link = (over: Record<string, string | undefined>) => {
     const p = new URLSearchParams();
-    const merged = { q: searchParams.q, filter, sort, ...over };
+    const merged = { q: searchParams.q, filter, sort, branch: searchParams.branch, ...over };
     Object.entries(merged).forEach(([k, v]) => v && v !== "all" && p.set(k, v));
     return `/dashboard/products?${p.toString()}`;
   };
@@ -92,6 +95,12 @@ export default async function ProductsPage({
       <form className="mb-4 flex flex-wrap items-center gap-2" action="/dashboard/products">
         <input className="input max-w-xs" name="q" placeholder="Search product, serial, customer, mobile…" defaultValue={searchParams.q} />
         <input type="hidden" name="filter" value={filter} />
+        {branches.length > 0 && (
+          <select className="input w-auto" name="branch" defaultValue={searchParams.branch ?? ""}>
+            <option value="">All branches</option>
+            {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        )}
         <select className="input w-auto" name="sort" defaultValue={sort}>
           <option value="expiry">Sort: next expiry</option>
           <option value="recent">Sort: recently added</option>

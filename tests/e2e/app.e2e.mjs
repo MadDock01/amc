@@ -189,10 +189,10 @@ await ap.getByText("Rahman Electronics").click();
 await ap.waitForURL(/tenants\/[0-9a-f-]{36}/);
 await ap.fill("input[name=days]", "10");
 await ap.getByRole("button", { name: "Extend" }).click();
-await ap.getByText("Trial extended by 10 days").waitFor();
+await ap.getByText("Trial extended by 10 days.", { exact: true }).waitFor();
 await ap.fill("input[name=credits]", "250");
 await ap.getByRole("button", { name: "Add", exact: true }).click();
-await ap.getByText("Added 250 SMS credits").waitFor();
+await ap.getByText("Added 250 SMS credits.", { exact: true }).waitFor();
 if (SHOTS) await ap.screenshot({ path: `${SHOTS}/10-tenant-detail.png`, fullPage: true });
 await ap.goto(BASE + "/super-admin/health");
 assert.match(await ap.textContent("body"), /daily-reminders/);
@@ -211,6 +211,145 @@ step("super admin: overview, extend trial, credits, health, onboard tenant");
 await page.goto(BASE + "/super-admin");
 assert.match(page.url(), /\/dashboard/);
 step("owner blocked from /super-admin");
+
+
+// ---------------------------------------------------------------------------
+// Full feature set
+// ---------------------------------------------------------------------------
+const walton = (await admin.from("products").select("id, public_token, tenant_id").eq("product_name", "Walton AC 1.5 ton").single()).data;
+const tenantId = walton.tenant_id;
+
+// 12. Account page + forgot password page
+await page.goto(BASE + "/account");
+await page.fill("input[name=name]", "Rahman Hossain");
+await page.getByRole("button", { name: "Save profile" }).click();
+await page.getByText("Profile saved.").waitFor();
+await page.goto(BASE + "/forgot-password");
+assert.match(await page.textContent("body"), /Reset your password/);
+step("account profile + forgot password page");
+
+// 13. Custom SMS template with live preview
+await page.goto(BASE + "/dashboard/settings");
+await page.fill("#sms_template", "Hi {customer}! {product} {type} ends {when}. Call {shop} {phone}");
+assert.match(await page.textContent("body"), /Hi Abdul Karim! Walton AC 1\.5 ton warranty ends/);
+await page.getByRole("button", { name: "Save settings" }).click();
+await page.getByText("Settings saved.").waitFor();
+step("custom SMS template saved with preview");
+
+// 14. Follow-up + send now (uses template)
+await page.goto(`${BASE}/dashboard/products/${walton.id}`);
+await page.selectOption("select[name=outcome]", "interested");
+await page.fill("input[name=note]", "Wants 2-year AMC");
+await page.getByRole("button", { name: "Log follow-up" }).click();
+await page.getByText("Follow-up saved.").waitFor();
+page.once("dialog", (d) => d.accept());
+await page.getByRole("button", { name: "Send now" }).click();
+await page.getByText(/Reminder sent/).waitFor();
+const { data: manualLog } = await admin.from("notification_logs").select("message_content").eq("tenant_id", tenantId).eq("channel", "sms").order("sent_at", { ascending: false }).limit(1).single();
+assert.match(manualLog.message_content, /^Hi Abdul Karim! Walton AC 1\.5 ton warranty ends/);
+if (SHOTS) await page.screenshot({ path: `${SHOTS}/12-product-crm.png`, fullPage: true });
+step("follow-up logged; manual send used the custom template");
+
+// 15. Customer requests a renewal call from the public page
+const pub = await (await browser.newContext()).newPage();
+const shortTok = Buffer.from(walton.public_token.replace(/-/g, ""), "hex").toString("base64url");
+await pub.goto(`${BASE}/w/${shortTok}`);
+await pub.fill("input[name=callback_phone]", "01811222333");
+await pub.fill("textarea[name=message]", "Please call after 5pm");
+await pub.getByRole("button", { name: "Request a renewal call" }).click();
+await pub.getByText(/shop has been notified/).waitFor();
+await pub.reload();
+await pub.getByRole("button", { name: "Request a renewal call" }).click();
+await pub.getByText(/already have your request/).waitFor();
+await page.goto(BASE + "/dashboard");
+assert.match(await page.textContent("nav"), /Requests \(1\)/);
+await page.goto(BASE + "/dashboard/requests");
+assert.match(await page.textContent("body"), /Please call after 5pm/);
+await page.getByRole("button", { name: "Mark handled" }).click();
+await page.getByText("Marked as handled.").waitFor();
+step("public renewal request → inbox → handled (with 24h de-dup)");
+
+// 16. Platform admin: upgrade to Enterprise + manual SMS-pack payment
+await ap.goto(`${BASE}/super-admin/tenants/${tenantId}`);
+await ap.selectOption("select[name=plan] >> nth=0", "enterprise");
+await ap.fill("input[name=ends_at]", "2027-12-31");
+await ap.getByRole("button", { name: "Update plan" }).click();
+await ap.getByText("Plan updated.").waitFor();
+const before = (await admin.from("sms_credits").select("balance").eq("tenant_id", tenantId).single()).data.balance;
+await ap.selectOption("select[name=kind]", "sms_pack");
+await ap.fill("input[name=sms_pack_size]", "500");
+await ap.fill("input[name=amount]", "250");
+await ap.fill("input[name=reference]", "CASH-001");
+ap.once("dialog", (d) => d.accept());
+await ap.getByRole("button", { name: "Record", exact: true }).click();
+await ap.getByText("Payment recorded and activated.").waitFor();
+const after = (await admin.from("sms_credits").select("balance").eq("tenant_id", tenantId).single()).data.balance;
+assert.equal(after - before, 500);
+assert.match(await ap.textContent("body"), /admin\.manual_payment/);
+await ap.goto(BASE + "/super-admin/payments");
+assert.match(await ap.textContent("body"), /Rahman Electronics/);
+if (SHOTS) await ap.screenshot({ path: `${SHOTS}/13-admin-payments.png`, fullPage: true });
+step("super admin: enterprise upgrade, manual payment, audit, payments page");
+
+// 17. Owner sees invoice, yearly pricing, SMS packs
+await page.goto(BASE + "/dashboard/billing?cycle=yearly");
+assert.match(await page.textContent("body"), /৳5,000/);
+assert.match(await page.textContent("body"), /500 SMS/);
+await page.getByRole("link", { name: "Invoice" }).first().click();
+await page.getByText(/INV-\d{6}/).waitFor();
+step("billing: yearly prices, SMS packs, invoice");
+
+// 18. Branches + branch-scoped staff
+await page.goto(BASE + "/dashboard/branches");
+await page.fill("input[name=name]", "Mirpur");
+await page.getByRole("button", { name: "Add branch" }).click();
+await page.getByText("Branch added.").waitFor();
+await page.goto(BASE + "/dashboard/staff");
+await page.locator("tr", { hasText: staffEmail }).locator("select[name=branch_id]").selectOption({ label: "Mirpur" });
+await page.locator("tr", { hasText: staffEmail }).getByRole("button", { name: "Set" }).click();
+await page.getByText("Branch updated.").waitFor();
+await sp.goto(BASE + "/dashboard/products");
+assert.doesNotMatch(await sp.textContent("body"), /Walton/, "branch staff don't see unassigned products");
+step("branches: staff scoped to Mirpur no longer see other products");
+
+// 19. API key → REST API
+await page.goto(BASE + "/dashboard/api");
+await page.fill("input[name=name]", "POS");
+await page.getByRole("button", { name: "Create key" }).click();
+const apiKey = (await page.getByTestId("new-api-key").textContent()).trim();
+const api = (path, init = {}) => fetch(BASE + path, { ...init, headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json", ...(init.headers ?? {}) } });
+let r = await api("/api/v1/products", { method: "POST", body: JSON.stringify({ customer: { name: "API Customer", phone: "01555000111" }, product_name: "IPS 1000VA", purchase_date: today, warranty_months: 12 }) });
+assert.equal(r.status, 201, await r.clone().text());
+const created = (await r.json()).data;
+assert.equal(created.warranty_expiry_date.slice(0, 4), String(Number(today.slice(0, 4)) + 1));
+r = await api("/api/v1/products?expiring_within=30");
+assert.equal(r.status, 200);
+assert.ok((await r.json()).total >= 2);
+r = await api(`/api/v1/products/${created.id}`);
+assert.equal((await r.json()).data.product_name, "IPS 1000VA");
+r = await api("/api/v1/customers?phone=01555000111");
+assert.equal((await r.json()).data.length, 1);
+r = await fetch(BASE + "/api/v1/products", { headers: { authorization: "Bearer amc_wrong" } });
+assert.equal(r.status, 401);
+// other tenant's product is invisible
+const otherProd = (await admin.from("products").select("id").neq("tenant_id", tenantId).limit(1).maybeSingle()).data;
+if (otherProd) assert.equal((await api(`/api/v1/products/${otherProd.id}`)).status, 404);
+await page.goto(BASE + "/dashboard/activity");
+assert.match(await page.textContent("body"), /API: POS/);
+step("API key: create product, list, get, lookup customer, 401/404, activity shows API actor");
+
+await page.getByRole("link", { name: "API" }).click();
+page.once("dialog", (d) => d.accept());
+await page.getByRole("button", { name: "Revoke" }).click();
+await page.getByText("Key revoked.").waitFor();
+assert.equal((await api("/api/v1/products")).status, 401);
+step("revoked key is rejected");
+
+// 20. Reports show renewal performance
+await page.goto(BASE + "/dashboard/reports");
+assert.match(await page.textContent("body"), /Renewal performance/);
+if (SHOTS) await page.screenshot({ path: `${SHOTS}/14-reports.png`, fullPage: true });
+step("reports: renewal performance");
 
 await browser.close();
 console.log("E2E OK");

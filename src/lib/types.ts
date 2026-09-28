@@ -20,6 +20,9 @@ export interface Tenant {
   notify_owner_email: boolean;
   sms_language: "en" | "bn";
   renewal_notice_for: string | null;
+  sms_template: string | null;
+  whatsapp_enabled: boolean;
+  sms_daily_cap: number;
   created_at: string;
 }
 
@@ -29,6 +32,7 @@ export interface AppUser {
   email: string | null;
   phone: string | null;
   role: Role;
+  branch_id: string | null;
   name: string | null;
   created_at: string;
   last_login: string | null;
@@ -58,6 +62,7 @@ export interface Product {
   amc_months: number | null;
   amc_expiry_date: string | null;
   is_active: boolean;
+  branch_id: string | null;
   public_token: string;
   notes: string | null;
   created_at: string;
@@ -76,6 +81,7 @@ export interface Reminder {
   status: ReminderStatus;
   channel: Channel;
   attempts: number;
+  is_manual: boolean;
   next_attempt_at: string;
   last_error: string | null;
   sent_at: string | null;
@@ -109,5 +115,42 @@ export interface Subscription {
   payment_ref: string | null;
   provider_trx_id: string | null;
   status: "pending" | "active" | "failed" | "cancelled" | "expired";
+  kind: "plan" | "sms_pack";
+  sms_pack_size: number | null;
+  invoice_no: number;
+  created_at: string;
+}
+
+export interface Branch {
+  id: string;
+  tenant_id: string;
+  name: string;
+  address: string | null;
+  phone: string | null;
+  created_at: string;
+}
+
+export type FollowupOutcome = "note" | "contacted" | "no_answer" | "interested" | "renewed" | "lost";
+
+export interface Followup {
+  id: string;
+  tenant_id: string;
+  product_id: string;
+  outcome: FollowupOutcome;
+  note: string | null;
+  next_follow_up: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface RenewalRequest {
+  id: string;
+  tenant_id: string;
+  product_id: string;
+  message: string | null;
+  callback_phone: string | null;
+  status: "new" | "handled";
+  handled_by: string | null;
+  handled_at: string | null;
   created_at: string;
 }

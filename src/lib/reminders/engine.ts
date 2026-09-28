@@ -1,9 +1,10 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { daysBetween, todayISO } from "../dates";
-import { customerSms, ownerSms, reminderEmail, type ReminderMessageInput } from "../notify/messages";
+import { addDaysISO, daysBetween, formatDate, todayISO } from "../dates";
+import { customerSms, localPhone, ownerSms, reminderEmail, type ReminderMessageInput } from "../notify/messages";
 import { sendEmail } from "../notify/email";
 import { sendSms, smsCostPerSegment, smsSegments } from "../notify/sms";
+import { sendWhatsApp } from "../notify/whatsapp";
 import { normalizeBdPhone } from "../phone";
 import { publicLinkFor } from "../links";
 import type { Customer, Product, Reminder, Tenant } from "../types";
@@ -34,17 +35,33 @@ interface DeliveryOutcome {
   attempted: number;
   succeeded: number;
   errors: string[];
+  /** hit the shop's daily SMS cap — retry tomorrow without counting an attempt */
+  deferred?: boolean;
+}
+
+/** 09:00 Bangladesh time tomorrow. */
+function tomorrowMorning(): string {
+  return new Date(addDaysISO(todayISO(), 1) + "T09:00:00+06:00").toISOString();
+}
+
+export interface ProcessSummaryWithDeferred extends ProcessSummary {
+  deferred: number;
 }
 
 /**
  * Send all due reminders. Safe to run concurrently — reminders are claimed
  * with SKIP LOCKED + a lease in claim_due_reminders().
  */
-export async function processReminderQueue(admin: SupabaseClient, limit = 200): Promise<ProcessSummary> {
-  const summary: ProcessSummary = { claimed: 0, sent: 0, failed: 0, retrying: 0, cancelled: 0 };
+export async function processReminderQueue(
+  admin: SupabaseClient,
+  opts: { limit?: number; ids?: string[] } = {},
+): Promise<ProcessSummaryWithDeferred> {
+  const summary: ProcessSummaryWithDeferred = { claimed: 0, sent: 0, failed: 0, retrying: 0, cancelled: 0, deferred: 0 };
 
-  const { data: claimed, error } = await admin.rpc("claim_due_reminders", { p_limit: limit });
-  if (error) throw new Error(`claim_due_reminders: ${error.message}`);
+  const { data: claimed, error } = opts.ids
+    ? await admin.rpc("claim_reminders_by_id", { p_ids: opts.ids })
+    : await admin.rpc("claim_due_reminders", { p_limit: opts.limit ?? 200 });
+  if (error) throw new Error(`claim reminders: ${error.message}`);
   const reminders = (claimed ?? []) as Reminder[];
   summary.claimed = reminders.length;
   if (!reminders.length) return summary;
@@ -82,7 +99,7 @@ export async function processReminderQueue(admin: SupabaseClient, limit = 200): 
     if (!p) cancelReason = "product deleted";
     else if (!p.is_active) cancelReason = "product archived";
     else if (currentExpiry !== r.expiry_date) cancelReason = "expiry date changed";
-    else if (r.expiry_date < todayISO()) cancelReason = "already expired";
+    else if (!r.is_manual && r.expiry_date < todayISO()) cancelReason = "already expired";
     else if (!tenantActive) cancelReason = "shop subscription inactive";
     if (cancelReason || !p) {
       await admin.from("reminders").update({ status: "cancelled", last_error: cancelReason }).eq("id", r.id);
@@ -92,6 +109,7 @@ export async function processReminderQueue(admin: SupabaseClient, limit = 200): 
 
     const input: ReminderMessageInput = {
       language: p.tenants.sms_language,
+      template: p.tenants.sms_template,
       customerName: p.customers.name,
       productName: p.product_name,
       type: r.reminder_type,
@@ -107,9 +125,15 @@ export async function processReminderQueue(admin: SupabaseClient, limit = 200): 
         ? await deliverSms(admin, r, p, input)
         : r.channel === "email"
           ? await deliverEmail(admin, r, p, input, ownerEmails.get(r.tenant_id) ?? [])
-          : { attempted: 0, succeeded: 0, errors: ["channel not supported yet"] };
+          : await deliverWhatsApp(admin, r, p, input);
 
-    if (outcome.attempted === 0) {
+    if (outcome.deferred && outcome.succeeded === 0) {
+      await admin
+        .from("reminders")
+        .update({ status: "pending", next_attempt_at: tomorrowMorning(), last_error: "daily SMS limit reached — will send tomorrow" })
+        .eq("id", r.id);
+      summary.deferred++;
+    } else if (outcome.attempted === 0) {
       await admin
         .from("reminders")
         .update({ status: "cancelled", last_error: outcome.errors[0] ?? "no recipients" })
@@ -163,9 +187,13 @@ async function deliverSms(admin: SupabaseClient, r: Reminder, p: ProductRow, inp
 
   for (const t of targets) {
     const segments = smsSegments(t.text);
-    const { data: ok, error } = await admin.rpc("consume_sms_credits", { p_tenant: r.tenant_id, p_count: segments });
+    const { data: status, error } = await admin.rpc("consume_sms_credits_capped", { p_tenant: r.tenant_id, p_count: segments });
+    if (status === "daily_cap") {
+      outcome.deferred = true;
+      continue;
+    }
     outcome.attempted++;
-    if (error || !ok) {
+    if (error || status !== "ok") {
       const msg = error ? `credit check failed: ${error.message}` : "insufficient SMS credits";
       outcome.errors.push(msg);
       await logNotification(admin, r, { channel: "sms", recipient_phone: t.phone, message_content: t.text, status: "failed", provider_response: msg });
@@ -189,6 +217,45 @@ async function deliverSms(admin: SupabaseClient, r: Reminder, p: ProductRow, inp
     });
     if (SEND_DELAY_MS) await sleep(SEND_DELAY_MS);
   }
+  return outcome;
+}
+
+/** WhatsApp to the customer. Uses 1 SMS credit per message. */
+async function deliverWhatsApp(admin: SupabaseClient, r: Reminder, p: ProductRow, input: ReminderMessageInput): Promise<DeliveryOutcome> {
+  const outcome: DeliveryOutcome = { attempted: 0, succeeded: 0, errors: [] };
+  const phone = normalizeBdPhone(p.customers.phone);
+  if (!phone) {
+    outcome.errors.push("no valid phone number");
+    return outcome;
+  }
+  const { data: status, error } = await admin.rpc("consume_sms_credits_capped", { p_tenant: r.tenant_id, p_count: 1 });
+  if (status === "daily_cap") return { ...outcome, deferred: true };
+  outcome.attempted++;
+  const preview = customerSms({ ...input, template: null, language: "en" });
+  if (error || status !== "ok") {
+    const msg = error ? `credit check failed: ${error.message}` : "insufficient SMS credits";
+    outcome.errors.push(msg);
+    await logNotification(admin, r, { channel: "whatsapp", recipient_phone: phone, message_content: preview, status: "failed", provider_response: msg });
+    return outcome;
+  }
+  const res = await sendWhatsApp(
+    phone,
+    [input.customerName, input.productName, input.type === "amc" ? "AMC" : "warranty", formatDate(input.expiry), input.shopName, localPhone(input.shopPhone)],
+    preview,
+  );
+  if (res.ok) outcome.succeeded++;
+  else {
+    await admin.rpc("refund_sms_credits", { p_tenant: r.tenant_id, p_count: 1 });
+    outcome.errors.push(`whatsapp to ${phone} failed`);
+  }
+  await logNotification(admin, r, {
+    channel: "whatsapp",
+    recipient_phone: phone,
+    message_content: preview,
+    status: res.ok ? "sent" : "failed",
+    provider_response: res.providerResponse,
+    cost: res.ok ? Number(process.env.WHATSAPP_COST_PER_MESSAGE ?? "0") || 0 : 0,
+  });
   return outcome;
 }
 

@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { daysBetween, formatDate, todayISO } from "@/lib/dates";
 import { parseToken } from "@/lib/links";
+import { RequestForm } from "./request-form";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Warranty status", robots: { index: false, follow: false } };
@@ -62,6 +63,7 @@ export default async function WarrantyStatus({ params }: { params: { token: stri
         {shopPhone && (
           <a href={`tel:${shopPhone}`} className="btn-primary mt-4 w-full">Call {p.tenants?.business_name} to renew</a>
         )}
+        <RequestForm token={params.token} />
         {p.tenants?.address && <p className="mt-3 text-center text-xs text-slate-500">{p.tenants.address}</p>}
       </div>
     </main>

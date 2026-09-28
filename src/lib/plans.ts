@@ -20,3 +20,29 @@ export function monthlyPrice(plan: Plan): number {
 
 /** Choices offered in Settings → reminder days. */
 export const REMINDER_DAY_OPTIONS = [60, 45, 30, 15, 7, 3, 1];
+
+export type Feature = "whatsapp" | "branches" | "api" | "templates";
+
+const FEATURES: Record<Plan, Feature[]> = {
+  trial: ["templates", "whatsapp"],
+  basic: ["templates"],
+  pro: ["templates", "whatsapp"],
+  enterprise: ["templates", "whatsapp", "branches", "api"],
+};
+
+export function hasFeature(plan: Plan, f: Feature): boolean {
+  return FEATURES[plan].includes(f);
+}
+
+/** Yearly = 10 months' price (2 months free). */
+export function yearlyPrice(plan: Plan): number | null {
+  const p = PLANS[plan].priceBdt;
+  return p === null ? null : p * 10;
+}
+
+/** SMS top-up packs, bought with bKash. */
+export const SMS_PACKS = [
+  { id: "sms500", sms: 500, priceBdt: 250 },
+  { id: "sms1000", sms: 1000, priceBdt: 450 },
+  { id: "sms5000", sms: 5000, priceBdt: 2000 },
+] as const;

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ProductWithCustomer, ReminderType } from "./types";
+import type { Followup, ProductWithCustomer, ReminderType } from "./types";
 
 export interface ExpiryRow {
   product: ProductWithCustomer;
@@ -31,4 +31,19 @@ export async function expiriesBetween(supabase: SupabaseClient, from: string, to
       rows.push({ product: p, type: "amc", date: p.amc_expiry_date });
   }
   return rows.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** Latest follow-up per product (RLS-scoped). */
+export async function latestOutcomes(supabase: SupabaseClient, productIds: string[]): Promise<Map<string, Followup>> {
+  const map = new Map<string, Followup>();
+  const ids = [...new Set(productIds)];
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data } = await supabase
+      .from("product_followups")
+      .select("*")
+      .in("product_id", ids.slice(i, i + 200))
+      .order("created_at", { ascending: false });
+    for (const f of (data ?? []) as Followup[]) if (!map.has(f.product_id)) map.set(f.product_id, f);
+  }
+  return map;
 }

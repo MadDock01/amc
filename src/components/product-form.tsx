@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { addMonthsISO, formatDate } from "@/lib/dates";
-import type { ProductWithCustomer } from "@/lib/types";
+import type { Branch, ProductWithCustomer } from "@/lib/types";
 import { CustomerPicker } from "./customer-picker";
 import { SubmitButton } from "./submit-button";
 
@@ -9,10 +9,13 @@ export function ProductForm({
   action,
   product,
   today,
+  branches = [],
 }: {
   action: (fd: FormData) => void;
   product?: ProductWithCustomer;
   today: string;
+  /** Shown only for multi-branch shops (and not for branch-scoped staff). */
+  branches?: Branch[];
 }) {
   const [purchase, setPurchase] = useState(product?.purchase_date ?? today);
   const [warranty, setWarranty] = useState(String(product?.warranty_months ?? 12));
@@ -50,6 +53,18 @@ export function ProductForm({
           <input className="input" id="serial_number" name="serial_number" defaultValue={product?.serial_number ?? ""} />
         </div>
       </div>
+
+      {branches.length > 0 && (
+        <div className="max-w-xs">
+          <label className="label" htmlFor="branch_id">Branch</label>
+          <select className="input" id="branch_id" name="branch_id" defaultValue={product?.branch_id ?? ""}>
+            <option value="">— No branch —</option>
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <fieldset className="rounded-md border border-slate-200 p-4">
         <legend className="px-1 text-sm font-semibold text-slate-700">Warranty</legend>

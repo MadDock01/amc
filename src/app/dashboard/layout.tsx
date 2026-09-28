@@ -1,23 +1,33 @@
 import Link from "next/link";
 import { requireTenantUser, tenantIsActive } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
 import { NavLinks } from "@/components/nav";
-import { PLANS } from "@/lib/plans";
+import { hasFeature, PLANS } from "@/lib/plans";
 import { formatDate } from "@/lib/dates";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { user, tenant } = await requireTenantUser();
   const isOwner = user.role === "owner";
+  const { count: newRequests } = await createClient()
+    .from("renewal_requests")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "new");
+  const plan = tenant.subscription_plan;
   const links = [
     { href: "/dashboard", label: "Overview" },
     { href: "/dashboard/products", label: "Products" },
     { href: "/dashboard/customers", label: "Customers" },
+    { href: "/dashboard/requests", label: newRequests ? `Requests (${newRequests})` : "Requests" },
     { href: "/dashboard/reminders", label: "Reminders" },
     { href: "/dashboard/reports", label: "Reports" },
     ...(isOwner
       ? [
           { href: "/dashboard/staff", label: "Staff" },
+          ...(hasFeature(plan, "branches") ? [{ href: "/dashboard/branches", label: "Branches" }] : []),
           { href: "/dashboard/billing", label: "Billing" },
           { href: "/dashboard/settings", label: "Settings" },
+          { href: "/dashboard/activity", label: "Activity" },
+          ...(hasFeature(plan, "api") ? [{ href: "/dashboard/api", label: "API" }] : []),
         ]
       : []),
   ];
@@ -30,10 +40,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-4 py-2">
           <div className="flex items-center gap-3">
             <Link href="/dashboard" className="font-semibold text-indigo-700">{tenant.business_name}</Link>
-            <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{PLANS[tenant.subscription_plan].name}</span>
+            <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{PLANS[plan].name}</span>
           </div>
           <div className="flex items-center gap-3 text-sm text-slate-600">
-            <span>{user.name ?? user.email} · {user.role}</span>
+            <Link href="/account" className="hover:text-slate-900">{user.name ?? user.email} · {user.role}</Link>
             <form action="/auth/signout" method="post">
               <button className="text-slate-500 hover:text-slate-900">Log out</button>
             </form>
@@ -45,10 +55,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
       </header>
       {!active ? (
         <div className="no-print bg-red-600 px-4 py-2 text-center text-sm text-white">
-          Your {tenant.subscription_plan === "trial" ? "trial" : "subscription"} has ended — reminders are paused and you can&apos;t add products.{" "}
+          Your {plan === "trial" ? "trial" : "subscription"} has ended — reminders are paused and you can&apos;t add products.{" "}
           {isOwner ? <Link href="/dashboard/billing" className="font-semibold underline">Renew now</Link> : "Ask the shop owner to renew."}
         </div>
-      ) : tenant.subscription_plan === "trial" ? (
+      ) : plan === "trial" ? (
         <div className="no-print bg-amber-50 px-4 py-2 text-center text-sm text-amber-900">
           Free trial: {trialDaysLeft} day(s) left (ends {formatDate(tenant.trial_ends_at)}).{" "}
           {isOwner && <Link href="/dashboard/billing" className="font-semibold underline">Choose a plan</Link>}

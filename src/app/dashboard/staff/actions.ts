@@ -29,7 +29,12 @@ export async function addStaff(fd: FormData) {
 
   // app_metadata can only be set with the service role — the DB trigger
   // reads it to attach the new user to THIS tenant as staff.
-  const { error } = await createAdminClient().auth.admin.createUser({
+  const branchId = String(fd.get("branch_id") ?? "") || null;
+  if (branchId) {
+    const { data: b } = await createClient().from("branches").select("id").eq("id", branchId).maybeSingle();
+    if (!b) redirectWith("/dashboard/staff", { error: "Unknown branch" });
+  }
+  const { data: created, error } = await createAdminClient().auth.admin.createUser({
     email: parsed.data.email,
     password: parsed.data.password,
     email_confirm: true,
@@ -37,6 +42,9 @@ export async function addStaff(fd: FormData) {
     user_metadata: { name: parsed.data.name },
   });
   if (error) redirectWith("/dashboard/staff", { error: error.message });
+  if (branchId && created.user) {
+    await createAdminClient().from("users").update({ branch_id: branchId }).eq("id", created.user.id).eq("tenant_id", tenant.id);
+  }
   revalidatePath("/dashboard/staff");
   redirectWith("/dashboard/staff", { ok: `Staff account created. Share the email and temporary password with ${parsed.data.name}.` });
 }
@@ -54,4 +62,22 @@ export async function removeStaff(userId: string) {
   if (error) redirectWith("/dashboard/staff", { error: error.message });
   revalidatePath("/dashboard/staff");
   redirectWith("/dashboard/staff", { ok: "Staff member removed." });
+}
+
+export async function assignBranch(userId: string, fd: FormData) {
+  const { tenant } = await requireOwner();
+  const branchId = String(fd.get("branch_id") ?? "") || null;
+  if (branchId) {
+    const { data: b } = await createClient().from("branches").select("id").eq("id", branchId).maybeSingle();
+    if (!b) redirectWith("/dashboard/staff", { error: "Unknown branch" });
+  }
+  const { error, count } = await createAdminClient()
+    .from("users")
+    .update({ branch_id: branchId }, { count: "exact" })
+    .eq("id", userId)
+    .eq("tenant_id", tenant.id)
+    .eq("role", "staff");
+  if (error || !count) redirectWith("/dashboard/staff", { error: error?.message ?? "Staff member not found" });
+  revalidatePath("/dashboard/staff");
+  redirectWith("/dashboard/staff", { ok: "Branch updated." });
 }

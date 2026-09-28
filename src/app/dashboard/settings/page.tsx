@@ -1,7 +1,9 @@
 import { requireOwner } from "@/lib/auth";
 import { Flash, PageHeader } from "@/components/ui";
 import { SubmitButton } from "@/components/submit-button";
-import { REMINDER_DAY_OPTIONS } from "@/lib/plans";
+import { hasFeature, REMINDER_DAY_OPTIONS } from "@/lib/plans";
+import { TemplateEditor } from "@/components/template-editor";
+import { displayPhone } from "@/lib/phone";
 import { saveSettings } from "./actions";
 
 export default async function SettingsPage({ searchParams }: { searchParams: { ok?: string; error?: string } }) {
@@ -43,6 +45,22 @@ export default async function SettingsPage({ searchParams }: { searchParams: { o
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" name="notify_owner_sms" defaultChecked={tenant.notify_owner_sms} /> SMS me a copy of every reminder (uses SMS credits)
           </label>
+          {hasFeature(tenant.subscription_plan, "whatsapp") ? (
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" name="whatsapp_enabled" defaultChecked={tenant.whatsapp_enabled} /> Also send reminders on WhatsApp (1 credit per message)
+            </label>
+          ) : (
+            <p className="text-sm text-slate-500">WhatsApp reminders are available on the Pro plan.</p>
+          )}
+          <div className="max-w-xs">
+            <label className="label" htmlFor="sms_daily_cap">Maximum SMS parts per day</label>
+            <input className="input" id="sms_daily_cap" name="sms_daily_cap" type="number" min={1} max={1000} defaultValue={Math.min(1000, tenant.sms_daily_cap)} />
+            <p className="mt-1 text-xs text-slate-500">Protects your credits after a big import. Reminders over the limit go out the next morning.</p>
+          </div>
+        </section>
+        <section className="card">
+          <h2 className="mb-2 font-semibold">SMS message</h2>
+          <TemplateEditor initial={tenant.sms_template} shop={tenant.business_name} phone={tenant.phone ? displayPhone(tenant.phone).replace("-", "") : ""} />
         </section>
         <SubmitButton>Save settings</SubmitButton>
       </form>

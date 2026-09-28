@@ -9,7 +9,7 @@ export default async function SuperAdminLayout({ children }: { children: React.R
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-2">
           <span className="font-semibold">Platform admin</span>
           <div className="flex items-center gap-3 text-sm text-slate-300">
-            <span>{user.email}</span>
+            <a href="/account" className="hover:text-white">{user.email}</a>
             <form action="/auth/signout" method="post"><button className="hover:text-white">Log out</button></form>
           </div>
         </div>
@@ -21,6 +21,7 @@ export default async function SuperAdminLayout({ children }: { children: React.R
               { href: "/super-admin", label: "Overview" },
               { href: "/super-admin/tenants", label: "Tenants" },
               { href: "/super-admin/tenants/new", label: "Onboard tenant" },
+              { href: "/super-admin/payments", label: "Payments" },
               { href: "/super-admin/health", label: "System health" },
             ]}
           />

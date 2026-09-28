@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { noStoreFetch } from "./fetch";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PROTECTED = ["/dashboard", "/super-admin"];
+const PROTECTED = ["/dashboard", "/super-admin", "/account", "/reset-password"];
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });

@@ -7,6 +7,10 @@ import { requireOwner, requireTenantUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { findOrCreateCustomer } from "@/lib/customers";
 import { friendlyDbError, redirectWith } from "@/lib/redirect";
+import { todayISO } from "@/lib/dates";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { sendManualReminder } from "@/lib/reminders/manual";
+import type { Channel, Product, ReminderType } from "@/lib/types";
 
 const optionalInt = z.preprocess((v) => (v === "" || v == null ? null : Number(v)), z.number().int().min(1).max(600).nullable());
 const optionalDate = z.preprocess((v) => (v === "" || v == null ? null : v), z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable());
@@ -26,6 +30,7 @@ const productSchema = z
     amc_start_date: optionalDate,
     amc_months: optionalInt,
     notes: optionalText(2000),
+    branch_id: optionalText(64),
   })
   .refine((d) => d.customer_id || d.new_customer_name, { message: "Select or create a customer" })
   .refine((d) => (d.amc_start_date === null) === (d.amc_months === null), {
@@ -63,6 +68,7 @@ export async function createProduct(formData: FormData) {
       amc_start_date: d.amc_start_date,
       amc_months: d.amc_months,
       notes: d.notes,
+      ...(formData.has("branch_id") && d.branch_id ? { branch_id: d.branch_id } : {}),
     })
     .select("id")
     .single();
@@ -102,6 +108,7 @@ export async function updateProduct(id: string, formData: FormData) {
         amc_months: d.amc_months,
         notes: d.notes,
         is_active: formData.getAll("is_active").includes("true"),
+        ...(formData.has("branch_id") ? { branch_id: d.branch_id } : {}),
       },
       { count: "exact" },
     )
@@ -121,9 +128,12 @@ export async function renewAmc(id: string, formData: FormData) {
   const supabase = createClient();
   const { data: p } = await supabase.from("products").select("amc_expiry_date, warranty_expiry_date").eq("id", id).single();
   if (!p) redirectWith("/dashboard/products", { error: "Product not found" });
-  const start = (formData.get("start") as string) || p!.amc_expiry_date || p!.warranty_expiry_date || new Date().toISOString().slice(0, 10);
+  const picked = String(formData.get("start") ?? "");
+  if (picked && !/^\d{4}-\d{2}-\d{2}$/.test(picked)) redirectWith(back, { error: "Invalid start date" });
+  const start = picked || p!.amc_expiry_date || p!.warranty_expiry_date || todayISO();
   const { error } = await supabase.from("products").update({ amc_start_date: start, amc_months: months.data, is_active: true }).eq("id", id);
   if (error) redirectWith(back, { error: friendlyDbError(error) });
+  await supabase.from("product_followups").insert({ product_id: id, outcome: "renewed", note: `AMC renewed for ${months.data} month(s) from ${start}` });
   revalidatePath("/dashboard", "layout");
   redirectWith(back, { ok: "AMC renewed. New reminders will be scheduled automatically." });
 }
@@ -136,4 +146,45 @@ export async function deleteProduct(id: string) {
   if (!count) redirectWith(`/dashboard/products/${id}`, { error: "Only the shop owner can delete products." });
   revalidatePath("/dashboard", "layout");
   redirect("/dashboard/products?ok=Product+deleted");
+}
+
+const followupSchema = z.object({
+  outcome: z.enum(["note", "contacted", "no_answer", "interested", "renewed", "lost"]),
+  note: optionalText(2000),
+  next_follow_up: optionalDate,
+});
+
+export async function addFollowup(id: string, formData: FormData) {
+  await requireTenantUser();
+  const back = `/dashboard/products/${id}`;
+  const parsed = followupSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) redirectWith(back, { error: "Pick an outcome" });
+  const { error } = await createClient().from("product_followups").insert({ product_id: id, ...parsed.data });
+  if (error) redirectWith(back, { error: friendlyDbError(error) });
+  revalidatePath("/dashboard", "layout");
+  redirectWith(back, { ok: "Follow-up saved." });
+}
+
+/** "Send reminder now": SMS/email/WhatsApp to the customer immediately (uses credits). */
+export async function sendNow(id: string, formData: FormData) {
+  const { tenant, user } = await requireTenantUser();
+  const back = `/dashboard/products/${id}`;
+  const type = z.enum(["warranty", "amc"]).safeParse(formData.get("type"));
+  const channels = formData.getAll("channel").filter((c): c is Channel => c === "sms" || c === "email" || c === "whatsapp");
+  if (!type.success) redirectWith(back, { error: "Pick warranty or AMC" });
+  // Visibility check through RLS before using the service role.
+  const { data: product } = await createClient().from("products").select("*").eq("id", id).maybeSingle();
+  if (!product) redirectWith("/dashboard/products", { error: "Product not found" });
+  const res = await sendManualReminder(createAdminClient(), {
+    product: product as Product,
+    tenant,
+    type: type.data as ReminderType,
+    channels,
+    userId: user.id,
+  });
+  if ("error" in res && res.error) redirectWith(back, { error: res.error });
+  const s = res.summary!;
+  revalidatePath(back);
+  if (s.sent) redirectWith(back, { ok: `Reminder sent (${s.sent} channel(s)).` });
+  redirectWith(back, { error: `Not sent: ${s.deferred ? "daily SMS limit reached, will go out tomorrow" : "see reminder history for the reason"}.` });
 }

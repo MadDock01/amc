@@ -45,5 +45,9 @@ export async function GET(req: NextRequest) {
     console.error("activate_subscription failed", error);
     return back({ error: `Payment received (TrxID ${result.trxID}) but activation failed — support has been notified.` });
   }
-  return back({ ok: `Payment successful (TrxID ${result.trxID}). Your plan is active.` });
+  return back({
+    ok: sub.kind === "sms_pack"
+      ? `Payment successful (TrxID ${result.trxID}). ${sub.sms_pack_size} SMS credits added.`
+      : `Payment successful (TrxID ${result.trxID}). Your plan is active.`,
+  });
 }

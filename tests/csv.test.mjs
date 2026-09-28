@@ -70,3 +70,14 @@ test("public link tokens round-trip and stay short", async () => {
   assert.equal(parseToken("../../etc"), null);
   assert.equal(parseToken("x".repeat(23)), null);
 });
+
+test("SMS templates render and validate", async () => {
+  const { renderTemplate, validateTemplate, DEFAULT_TEMPLATE_EN } = await import("../src/lib/notify/templates.ts");
+  const out = renderTemplate(DEFAULT_TEMPLATE_EN, {
+    customer: "Karim", product: "AC", type: "warranty", when: "tomorrow", shop: "Shop", phone: "", link: "",
+  });
+  assert.equal(out, "Dear Karim, your AC warranty expires tomorrow. Renew: Shop");
+  assert.equal(validateTemplate("Hi {customer}, {product} ends {date}"), null);
+  assert.match(validateTemplate("Hi {nme} {product}"), /Unknown/);
+  assert.match(validateTemplate("Hi {customer}"), /\{product\}/);
+});

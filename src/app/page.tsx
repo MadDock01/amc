@@ -29,8 +29,11 @@ export default function Home() {
         <ul className="mt-12 grid gap-4 sm:grid-cols-3">
           {[
             ["Bulk import", "Upload your old Excel sheet as CSV and you're live in minutes."],
-            ["Automatic SMS & email", "Daily reminders via Bangladeshi SMS gateways, with retries."],
-            ["Staff accounts", "Staff can add entries; only owners can delete or see billing."],
+            ["Automatic SMS, email & WhatsApp", "Reminders 30/15/7/1 days before expiry, in English or Bangla, with your own wording."],
+            ["Renewal follow-up", "Log calls, see overdue renewals, and get “call me” requests straight from customers."],
+            ["Staff & branches", "Staff can add entries; only owners delete or see billing. Enterprise: multiple branches."],
+            ["Reports", "Monthly expiry and renewal-rate reports, CSV export, printable PDF."],
+            ["API", "Enterprise: connect your POS or billing software so every sale is tracked automatically."],
           ].map(([t, d]) => (
             <li key={t} className="card">
               <div className="font-medium">{t}</div>
